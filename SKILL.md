@@ -1,24 +1,283 @@
 ---
 name: news-quote-card
-description: Turn a news/interview video (X or any URL) into a bilingual ZH+EN social pack — 3 vertical quote cards + a short 1080x1920 subtitle video — using only real transcribed quotes.
+description: 将新闻采访、播客或演讲视频（本地文件、直链 MP4 或 X 等平台链接）经过来源获取、帖子与片段核对、Whisper 逐字转写、真实原话选句、取帧与裁切、渲染和逐项质检，制作成一套中英双语社交素材：3 张 1080×1440 金句卡（钩子 / 核心金句 / 结论）+ 1 段 1080×1440、默认 6 秒、保留原声的双语烧录字幕短视频，以及双语简介与话题标签。用户要求“做成双语图+视频”“金句卡”“抖音/X 素材包”“把采访做成 3 图 1 视频”“烧录中英字幕”“去掉原视频字幕再加我们的字幕”时使用。只使用视频里真实说过的话，不编造引语。
 ---
-# news-quote-card
 
-## 1. Extract & analyze
-`python3 extract.py --url <X post or .mp4 URL> --outdir /workspace/raw/<slug> [--lang en] [--frames 5,30,92]`
-→ transcript.txt (segment timestamps), words.txt (word timestamps), frames/, contact.jpg. Read transcript + contact sheet.
-FIRST check the clip actually covers the post's claimed points (posts often summarize a longer full interview); if not, stop and report the mismatch before making anything.
-For zh audio use --model medium (small garbles terms, e.g. Q-Day→QAIS). Pick quotes ONLY from transcript; never invent or paraphrase inside quote marks. Interpretive framing goes in headlines only. Translate EN→ZH faithfully.
+# 新闻金句双语卡
 
-## 2. Cards (1080x1440)
-`python3 render_card.py --frame F.png --tag '人物 媒体 专访 | NAME' --headline '中文\n标题' --headline_en '...' --quote '“…”' --quote_en '"…"' --out 01.png [--frame-y 420]`
-Design: BG #0A0A0C, 8px #76B900 top bar, green tag Bold34, white ZH headline Bold78, grey EN Regular38, 16:9 frame 1080x608 centered, yellow #FFD600 ZH quote Bold52, EN Regular36. Noto Sans CJK SC. Typical pack: hook / key quote / takeaway.
+先确认来源能支撑用户想要的主题，再做任何渲染。不要把帖子文案、标题党摘要或自己的推断当成受访者的原话。
 
-## 3. Short video (1080x1920)
-`python3 make_video.py --video V.mp4 --start 89.7 --end 96.95 --duration 6 --fit --title '中文标题' --title_en '...' --subs '1.6|“我不认同那些|"I don'\''t approve of' --subs '3.95|…|…' --subs '0|…|…' --out 04.mp4`
-Use words.txt for start/end; sub t_end in OUTPUT time (source offset / speed). --fit = atempo (keeps pitch) when quote is longer than duration; report speed.
+## 开始时确认任务
 
-If the source has burned-in subs, pass --crop w:h:x:y (16:9, above the sub band) to both render_card.py and make_video.py, e.g. 1067:600:0:0 for 720p.
+用户通常只给一个链接和一句主题，例如“写 AI 末日论是烟雾弹”“AI 时代普通人如何抓住机会”。开始前确认三件事，已明确的不重复问：
 
-## 4. Verify & caption
-ffprobe duration; Read cards + 3 video frames. Write bilingual caption + hashtags. Report quotes with timestamps.
+1. **来源**：本地视频、直链 MP4，还是 X / 其他平台帖子链接。
+2. **主题**：用户想要的叙事角度。主题只能决定标题框架，不能决定引语内容。
+3. **交付集**：默认 3 张卡 + 1 段 6 秒视频 + 双语简介；用户另有要求（张数、时长、竖版比例）时按用户要求。
+
+主题与片段内容可能不一致：帖子常常是对一场数小时完整访谈的摘要，而附带的视频只是其中一段。**必须先转写、再核对**，确认片段里确实说过帖子列出的观点。若不一致，停止制作，向用户说明片段实际讲了什么，给出可选方案（换片段 / 按片段真实内容做），等待选择，不要硬凑。
+
+## 版本
+
+本地版本写在 Skill 内的 `VERSION`。本 Skill 不联网检查更新，也不自动修改自身文件；调整脚本或文档后手动递增版本号，并在交付中说明改动。
+
+## 产出路由
+
+| 产出 | 用途 | 文字来源 | 命令 |
+|---|---|---|---|
+| **金句卡**（1080×1440） | 钩子、核心金句、结论三张图 | 转写稿中已核对的原话 + 译文 | `scripts/render_card.py` |
+| **双语字幕短视频**（1080×1440） | 6 秒左右的最强一句，保留原声 | 转写稿中逐词时间戳对应的原话 + 译文 | `scripts/make_video.py` |
+| **双语简介** | 发帖文案与话题标签 | 引号内只用原话，其余为解读 | 由 Agent 撰写 |
+
+- 引号里的中文或英文必须能回到转写稿中某个时间段逐字核对；英文原声时中文为翻译，中文原声时英文为翻译，翻译不得夸大或改变含义。
+- 解读性表述（“烟雾弹”“挡箭牌”“风险未定价”）只能出现在标题、副标题和简介正文里，不能放进引号，不能署名为受访者原话。
+- 记者提问也可以上卡，但必须标明“记者：”，并同样逐字核对。
+- 删减语气词（“就是”“呢”“啊”）可以接受，删减处用“…”或在交付中说明；不得拼接不同段落的话冒充一句。
+
+## 按任务读参考文件
+
+- **X / 其他平台链接、下载与转写**：先读 [references/download-and-transcripts.md](references/download-and-transcripts.md)。X 帖子优先通过 X 工具读取帖子与媒体变体，拿到 `video.twimg.com` 的 MP4 直链后再下载；转写时中文原声使用 `--model medium`。
+- **完整流程：读视频 → 核对 → 选句 → 出图出视频 → 写简介**：读 [references/end-to-end-workflow.md](references/end-to-end-workflow.md)。
+- **版式、颜色、字号、裁切和字幕节奏**：读 [references/visual-style.md](references/visual-style.md)。新卡必须与既有版式完全一致，不另起设计。
+- **报错、出图异常、字幕对不上**：先查 [references/troubleshooting.md](references/troubleshooting.md)。
+- **本地短视频且原话、时间点都已确定**：直接执行下面的核心流程。
+
+## 环境与路径
+
+将 `<SKILL_DIR>` 解析为当前 `SKILL.md` 所在目录的绝对路径；不要假设工作目录就是 Skill 目录。三个脚本都在 `<SKILL_DIR>/scripts/`，`make_video.py` 会从同目录导入 `render_card.py` 的字体、颜色与排版函数，两者必须放在一起。
+
+```bash
+# 依赖
+python3 -m pip install --break-system-packages -r "<SKILL_DIR>/requirements.txt"
+# 平台链接（非 .mp4 直链）另需
+python3 -m pip install --break-system-packages yt-dlp
+# 字体检查：需要 Noto Sans CJK（Bold + Regular）
+fc-list | grep -i "Noto Sans CJK"
+```
+
+核心依赖：Python 3.10+、Pillow、numpy、faster-whisper、FFmpeg / ffprobe，以及 `/usr/share/fonts/opentype/noto/NotoSansCJK-{Bold,Regular}.ttc`（脚本用 ttc 第 3 个字面，即简体中文 SC）。缺失时先说明用途再安装；不修改系统字体配置或 shell 配置。首次运行 Whisper 会下载模型，出现 `HF_TOKEN` 未设置的提示可忽略。
+
+### 脚本一览
+
+| 脚本 | 输入 | 输出 | 关键参数 |
+|---|---|---|---|
+| `extract.py` | `--url`（直链或平台链接）或 `--video`（本地文件） | `video.mp4`、`audio.raw`、`transcript.txt`、`words.txt`、`frames/`、`contact.jpg` | `--outdir`（必填）、`--lang`（默认 en）、`--model`（默认 small）、`--frames`（逗号分隔秒数，默认每 10 秒） |
+| `render_card.py` | 一张源画面帧 + 六段文字 | 一张 1080×1440 PNG | `--frame --tag --headline --headline_en --quote --quote_en --out`（必填）、`--height`、`--frame-y`、`--crop` |
+| `make_video.py` | 源视频 + 起止时间 + 标题 + 字幕段 | 一段 1080×1440 MP4 | `--video --start --end --tag --title --title_en --subs --out`（必填）、`--duration`（默认 6）、`--fit`、`--crop` |
+
+`render_card.py` 同时是一个可导入的模块：`card()` 返回 PIL 图像，`ctext()` 负责居中多行文字，`F/B/R/ACCENT/BG/YEL` 为字体与颜色常量；`make_video.py` 复用它们生成视频的标题模板与字幕层，因此卡片与视频的字体、颜色始终一致。修改颜色或字体时只改 `render_card.py` 一处，并重跑回归测试。
+
+`extract.py` 把音频解码为 16 kHz 单声道 float32 的 `audio.raw`，以 numpy 数组交给 faster-whisper，避开部分 PyAV 版本的 `metadata_errors` 参数错误；对选中时间段复核时可直接切片该数组，不必重新解码整段视频。
+
+推荐目录：原始素材放 `/workspace/raw/<slug>/`，成品放 `/workspace/deliverables/<slug>/`，测试输出只放 `/tmp/`。
+
+## 共同的默认版式
+
+- 金句卡：1080×1440，深色底 `#0A0A0C`，顶部 `#76B900` 绿色细条；从上到下依次是绿色标签行、白色中文大标题、灰色英文标题、16:9 画面（1080×608）、黄色 `#FFD600` 中文引语、浅灰英文引语。字体为 Noto Sans CJK SC 粗体/常规。
+- 画面默认垂直居中（1440 高时 y=416）；核心金句卡惯用 `--frame-y 420`。
+- 短视频：1080×1440（与金句卡同为 3:4），顶部绿条 8px；y=70 起绿色标签行（与卡片相同：人名 + 播客/采访 | ENGLISH NAME，Bold 34）；标签结束 +20 起中文标题 Bold 70，再 +5 英文 Regular 38；画面 1080×608 位于 y=416；双语字幕块位于 y=1074（中文黄色粗体 66 + 英文白色常规 44）；30 fps，H.264 CRF 18，AAC 192k。
+- 默认 3 张卡：`01_hook.png`（钩子）、`02_quote.png`（核心金句）、`03_takeaway.png`（结论），视频 `04_video_6s.mp4`。
+- 文字换行全部由参数中的 `\n` 手动控制，每块建议不超过 2 行；脚本不自动换行，也不检测溢出，必须看图验收。
+- 不覆盖已交付的成品；需要验证改动时只在 `/tmp/` 出测试图。
+
+### 去除原视频烧录字幕或角标冲突
+
+源视频自带烧录字幕时，原字幕会与我们的双语字幕重复。两个渲染脚本都支持 `--crop w:h:x:y`，在缩放前裁掉字幕带：
+
+- 裁切框保持 16:9（例如 720p 源用 `1003:564:40:0` 或 `1067:600:0:0`），否则会被拉伸到 1080×608。
+- 先抽几帧看字幕带的上沿，再定 `h`；人物头顶和主体不能被裁。
+- 卡片与视频使用同一裁切参数，保持一套素材视觉一致。
+- 角标、台标只在不遮挡文字时保留；遮挡时用 `x/y` 偏移避开，并在交付中说明。
+
+## 共同前半流程
+
+### 1. 获取来源并核对帖子与片段
+
+```bash
+python3 "<SKILL_DIR>/scripts/extract.py" --url "<mp4 直链或平台链接>" \
+  --outdir /workspace/raw/<slug> --lang zh --model medium
+```
+
+输出 `video.mp4`、`audio.raw`、`transcript.txt`（分句时间戳）、`words.txt`（逐词时间戳）、`frames/`（默认每 10 秒一帧）和 `contact.jpg`（帧总览）。本地文件用 `--video` 代替 `--url`。
+
+读完整 `transcript.txt`，逐条对照帖子文案中的观点：找到对应时间段的打勾，找不到的明确记下。只要用户要求的主题在片段中没有出处，就按“开始时确认任务”的规则停下报告。
+
+### 2. 选句与稳定帧
+
+- 从转写稿挑 4 句：钩子 1 句、核心金句 1 句、结论 1 句、视频 1 句（可与核心金句相同，但更推荐最“冲”的一句）。
+- 对选中的时间段用 medium 模型重新转写并取逐词时间戳，修正专有名词（如 Q-Day、BTC、OpenAI），以复核后的文字为准。
+- 视频句理想长度 5–7 秒；超过目标时长时用 `--fit` 轻度加速（建议不超过 1.25 倍）。
+- 视频句全程按 0.5 秒步长抽帧检查，确认没有剪辑方插入的分屏图或文字卡。
+- 用 `--frames` 在每句时间点附近抽帧，挑人物正脸、表情有张力、嘴型自然的一帧；避免眨眼、转头、双人远景作为主图。
+
+### 多人对话与访谈
+
+- 先标说话人：记者提问与受访者回答分开记录，不把记者的话算到受访者头上。
+- 钩子卡可以用记者提问配记者画面，引语前加“记者：”。
+- 主图应是该句说话人；若片段只有双人远景，优先找近景帧，找不到时在交付中说明。
+
+## 金句卡
+
+### 3A. 写卡片参数
+
+每张卡需要：标签（如“人物 媒体 专访 | NAME”“核心金句 | KEY QUOTE”“结论 | TAKEAWAY”）、中文标题（解读框架，可 2 行）、英文标题、中文引语、英文引语、画面帧。
+
+### 4A. 渲染
+
+```bash
+python3 "<SKILL_DIR>/scripts/render_card.py" --frame frames/f_92.png \
+  --tag '核心金句 | KEY QUOTE' --headline '某某原话' --headline_en 'In his own words' \
+  --quote '“……第一行\n第二行”' --quote_en '"... line one\nline two."' \
+  --frame-y 420 --crop 1003:564:40:0 --out /workspace/deliverables/<slug>/02_quote.png
+```
+
+可选参数：`--height`（默认 1440）、`--frame-y`（默认居中）、`--crop`（默认不裁）。
+
+## 双语字幕短视频
+
+### 3B. 定起止与字幕切分
+
+- 用 `words.txt` 取句首词开始前约 0.1 秒为 `--start`、句尾词结束后约 0.05 秒为 `--end`。
+- 速度 = (end − start) / duration；字幕切点换算为**输出时间**：(源时间 − start) / 速度。
+- 一般切 3 段，每段中文 ≤ 12 字、英文一行。
+
+### 4B. 渲染
+
+```bash
+python3 "<SKILL_DIR>/scripts/make_video.py" --video video.mp4 --start 287.0 --end 294.0 \
+  --duration 6 --fit --title '中文标题' --title_en 'English title' \
+  --subs '2.5|“第一段|"Part one' --subs '3.95|第二段|part two' --subs '0|第三段”|part three."' \
+  --crop 1003:564:40:0 --out /workspace/deliverables/<slug>/04_video_6s.mp4
+```
+
+`--subs` 格式为“结束时间|中文|英文”，最后一段的结束时间会被忽略并延续到结尾。脚本打印实际速度，速度须在 0.5–2 之间，否则报错。
+
+## 翻译规则
+
+- **英文原声 → 中文**：意译优先，但保留关键词的锋利度。“deflections and distractions” 译为“转移视线和分散注意力”，不要升级成“烟雾弹”；“烟雾弹”只放在标题里。
+- **中文原声 → 英文**：句子短、主语清楚，适合手机一行读完。口语里的“我觉得”可保留为 “I think”，不要删成断言。
+- 专有名词统一：Q-Day、BTC、ETF、OpenAI、CEO 保持英文；人名第一次出现用中英并列（黄仁勋 / Jensen Huang，孙宇晨 / Justin Sun）。
+- 中英文引号分开：中文用 “” ，英文用 "" ；跨行引语只在首尾各放一次引号，省略处中文用“…”、英文用 "…"。
+- 数字、时间、金额照原话写，不换算、不取整、不补单位。
+- 字幕切段时中英两侧意思要对齐到同一段；英文语序不同时，宁可把整句意思放在一段里，也不要让中英文分属不同时间段，避免出现“中文在说 A、英文在说 B”的错位。
+- 不确定的译法在交付中列出备选，由用户决定。
+
+## 原话记录表
+
+每个任务在 `/workspace/raw/<slug>/quotes.md` 写一张原话记录表，渲染前填好，交付时直接引用。它不是脚本输入，而是审核依据：任何上卡、上视频、进简介引号的文字都必须先出现在这张表里。
+
+| 用途 | 源时间（秒） | 原话（复核后逐字） | 译文 | 删减说明 |
+|---|---|---|---|---|
+| 钩子 | 7.6–20.5 | Do you have more faith in the four or five CEOs… | 记者：比起监管，你更信那四五个掌控AI的CEO吗？ | “additional regulation” 简写为 “regulation” |
+| 核心金句 | 89.8–96.9 | I don't approve of deflections and distractions about the end of the world. | 我不认同那些关于世界末日的转移视线和分散注意力。 | 无 |
+| 视频 | 89.7–96.95 | 同上 | 同上 | 1.2083 倍速 |
+
+填写规则：
+
+- 源时间取自 `words.txt` 的首词开始与尾词结束，保留两位小数时也可四舍五入到 0.1 秒。
+- “原话”一栏写受访者的原语言；中文原声时把 small 模型的错字修正为 medium 复核结果，并在删减说明里注明修正（如 “QAIS → Q-Day”）。
+- 删减语气词或省略中间半句时，在原话里用“…”标出，并写进删减说明。
+- 同一句同时用于卡片和视频时，分两行记录，视频行写明速度与裁切参数。
+
+## 标题与解读的写法
+
+标题负责“框架”，引语负责“证据”。一套素材的叙事通常是：
+
+1. **钩子卡**：抛出冲突或问题。标题可用判断句（“AI末日论 是一颗烟雾弹”“AI+量子 盯上了比特币”），引语用最能引出冲突的原话或记者提问。
+2. **核心金句卡**：标题固定为“某某原话 / In his own words”，引语用整套素材最硬的一句，尽量不删减。
+3. **结论卡**：标题给出落点（“末日恐惧 = 挡箭牌”“风险未定价 先密切关注”），引语用能支撑这个落点的原话；落点超出原话时，必须收敛标题，而不是改引语。
+
+标题检查：
+
+- 中文标题每行 ≤ 8 字、最多 2 行；英文标题一行、≤ 45 个字符，过长会贴边。
+- 标题中的判断必须能从引语合理推出；把受访者对自己的态度（“我们要密切关注”）写成对观众的建议时，应在交付中提示。
+- 不在标题里加入片段中没有的数字、人名、机构或事件。
+
+## 双语简介
+
+- 结构：中文段落 → 英文段落 → 话题标签。中文 120–200 字，英文与中文意思对应。
+- 引号里的话与原话记录表逐字一致；其余为叙述和解读，可以有观点，但不能改写成受访者说的。
+- 结尾可用一个问句引导互动（“你觉得呢？”“Is your BTC ready?”）。
+- 话题标签 8–12 个，中英混合：人物中英名、公司或产品、主题词、领域词，例如 `#黄仁勋 #JensenHuang #NVIDIA #AI末日论 #AIRegulation`。
+- 不使用用户未要求的敏感、攻击性或未经证实的指控性标签。
+
+## 两个参考案例
+
+**案例一：黄仁勋 CBS 专访（英文原声）**。帖子主题“AI末日论是烟雾弹”。转写确认 90–97 秒有 “I don't approve of deflections and distractions about the end of the world.”，与主题吻合。钩子卡用记者提问配记者画面，核心金句卡用这句原话，结论卡用 98–103 秒 “I rather them focus on the things that I know they're focused on.”；视频截取 89.7–96.95 秒，1.2083 倍速放进 6 秒。原视频无烧录字幕，不需要 `--crop`。
+
+**案例二：孙宇晨 × 金明访谈（中文原声）**。帖子列出“AI 时代普通人如何抓住机会”的 4 个观点，但附带的 761 秒片段实际讲的是 Solana、Hyperliquid 和量子计算对 BTC 的威胁。按停止条件报告后，用户选择按片段真实内容制作：钩子“AI+量子 盯上了比特币”、核心金句“现在这个市场并没有 pricing Q-Day”、结论“从完全不关注改为密切关注”；视频用 287.0–294.0 秒“绝大多数行业的人低估了这件事情对 BTC 所带来的冲击”，1.1667 倍速。原视频有烧录中文字幕，卡片与视频统一使用 `--crop 1003:564:40:0`。
+
+## 逐张质检与有界返工
+
+先看缩略总览（把 3 张卡和视频的 3 帧拼成一张），再逐个打开原尺寸文件。
+
+**卡片检查清单**
+
+- 尺寸 1080×1440，顶部绿条、标签、标题、画面、引语的上下顺序与默认版式一致，颜色与字号没有被改动。
+- 中文标题 ≤ 2 行；英文标题一行，左右至少留 40px；引语块中英各 ≤ 2 行，最长一行不贴边。
+- 引语与原话记录表逐字一致；中文与英文在意思上对应；引号成对。
+- 画面没有被拉伸变形（裁切框为 16:9）；原视频烧录字幕不可见；人物头顶、下巴完整。
+- 三张卡的主图不重复，人物表情与该卡语义相符。
+
+**视频检查清单**
+
+- `ffprobe` 显示画面与音轨时长都等于目标时长，分辨率 1080×1440，音轨存在。
+- 开头、中间、结尾各抽一帧：标题始终显示；字幕按切点依次切换，没有空白段或重叠段；最后一段一直持续到结尾。
+- 听感：加速后语速仍自然，句首没有被吃字、句尾没有被截断。
+- 字幕与说话内容同步，误差不超过约 0.3 秒。
+
+**一致性检查**
+
+- 文件名、数量与交付集一致；卡片与视频使用相同的裁切参数与配色。
+- 所有引号内文字都能在原话记录表中找到；简介中的引语与卡片一致。
+
+发现问题只改对应变量：文字过长先拆行或换短句；帧不好时前后移动 0.3–1.5 秒重抽；字幕切点不准时回到 `words.txt` 重新换算；句尾被截断时把 `--end` 后移 0.1–0.2 秒并重新计算速度。连续三轮仍不理想时报告限制，不无限微调。
+
+## 与其他工具协作
+
+- X 工具：读取帖子全文、媒体变体与时长，确认视频与帖子对应。
+- faster-whisper：生成分句与逐词时间戳，是选句与核对的唯一依据。
+- 写作：撰写双语简介；引号内文字仍受原话规则约束。
+- 本 Skill：管理原话核对、取帧裁切、卡片与视频渲染以及视觉质检。
+
+复用已下载的视频、音频和转写稿，不重复下载或转写整段。
+
+## 停止条件
+
+- 用户要求的主题在片段里没有出处（帖子与片段不一致）。
+- 无法获得可处理的视频文件，或需要绕过登录、付费墙、DRM。
+- 关键原话转写不清，复核后仍无法确定措辞。
+- 没有可用的 CJK 字体。
+- 原视频烧录字幕或台标覆盖人物主体，裁切后无法保留可用画面。
+- 用户要求的引语需要拼接不同时间段的话才能成立。
+- 加速超过可接受范围仍放不进目标时长，且用户不接受换句或延长。
+
+## 回归测试
+
+修改脚本、移动目录或升级依赖后，先做一次回归测试再交付。测试只写 `/tmp/`，不重渲 `/workspace/deliverables/` 中的成品。
+
+```bash
+cd /tmp && python3 "<SKILL_DIR>/scripts/render_card.py" \
+  --frame /workspace/raw/jensen/h13.png --tag '黄仁勋 CBS 专访 | JENSEN HUANG' \
+  --headline 'AI末日论\n是一颗烟雾弹' --headline_en 'The AI doomsday talk is a smokescreen' \
+  --quote '记者：比起监管，你更信那四五个\n掌控AI的CEO吗？' \
+  --quote_en '"Do you have more faith in the four or five CEOs\nwho control this technology than in regulation?"' \
+  --out /tmp/nqc_card.png
+python3 -c "from PIL import Image,ImageChops as C;a=Image.open('/tmp/nqc_card.png').convert('RGB');b=Image.open('/workspace/deliverables/jensen-doom/01_hook.png').convert('RGB');print(C.difference(a,b).getbbox())"
+```
+
+输出 `None` 表示与基准卡逐像素一致。视频回归用同一参数重新生成到 `/tmp/nqc_video.mp4`，检查时长为 6.000000、速度打印为 1.2083，并抽帧与 `04_video_6s.mp4` 目视对比。基准素材缺失时，在交付中说明回归无法执行，而不是跳过不提。
+
+## 交付
+
+提供成品路径、每张卡与视频的检查结果、所用原话及其源视频时间戳、视频速度与裁切参数、双语简介与话题标签。明确区分“原话”与“解读”；不得把未打开检查的图片或视频报告为完成。
+
+建议的交付结构：
+
+1. **文件**：`01_hook.png`、`02_quote.png`、`03_takeaway.png`（1080×1440）与 `04_video_6s.mp4`（1080×1440，时长、速度）。
+2. **原话与时间戳**：按原话记录表列出每条引语、源时间与删减说明；中文原声注明已用 medium 模型复核。
+3. **处理说明**：是否裁掉原字幕、裁切参数、保留了哪些角标、加速倍数。
+4. **简介**：中文段、英文段、话题标签。
+5. **需用户决定的事项**：帖子与片段不一致、译法备选、标题是否把受访者的自我态度写成了建议等。
+
+原始素材与转写稿保留在 `/workspace/raw/<slug>/`，便于后续返工或换句。
