@@ -1,0 +1,4 @@
+interface:
+  display_name: "新闻金句双语卡"
+  short_description: "读取采访视频，转写选句，生成中英双语金句卡与 6 秒烧录字幕短视频"
+  default_prompt: "使用 $news-quote-card 把这个采访视频或 X 链接做成 3 张双语金句卡 + 1 段 6 秒双语字幕视频；先核对帖子与片段是否一致，只用转写里的真实原话，再渲染、质检并写双语简介。"
